@@ -3663,7 +3663,7 @@ do -- Library
         --
         local ToggleOutline = Library:CreateObject("Frame", {
             Name = "ToggleOutline",
-            Position = UDim2.new(0, 0, 0, 2),
+            Position = UDim2.new(0, 0, 0, 1),
             Size = UDim2.new(0, 8, 0, 8),
             BorderColor3 = Color3.fromRGB(0, 0, 0),
             ZIndex = Options.ZIndex or 2,
