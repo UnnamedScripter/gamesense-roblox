@@ -146,45 +146,132 @@ do -- Library
         return Options
     end
     --
-    function Library:GetAsset(Asset)
-        if type(Asset) ~= "string" or Asset == "" then
-            return Asset
-        end
+    do -- Assets
+        local AssetCache = {}
+        local AssetFolder = "gamesense_assets"
+        local AssetRepo = "https://raw.githubusercontent.com/UnnamedScripter/gamesense-roblox/refs/heads/main/"
+        local FolderChecked = false
 
-        local isHttp = Asset:sub(1, 7) == "http://" or Asset:sub(1, 8) == "https://"
-        local isRepoFile = not isHttp and Asset:match("%.png$")
-
-        if isHttp or isRepoFile then
-            local getAsset = getcustomasset or getsynasset
-            local url = isHttp and Asset or ("https://raw.githubusercontent.com/UnnamedScripter/gamesense-roblox/refs/heads/main/" .. Asset)
-
-            if getAsset and type(writefile) == "function" and type(isfile) == "function" then
-                local folder = "gamesense_assets"
-                if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(folder) then
-                    pcall(makefolder, folder)
-                end
-
-                local cleanName = url:match("([^/]+)$") or "asset.png"
-                cleanName = cleanName:match("^([^?#]+)") or cleanName
-                local filePath = folder .. "/" .. cleanName
-
-                if not isfile(filePath) then
-                    local ok, content = pcall(function() return game:HttpGet(url) end)
-                    if ok and content and #content > 0 then
-                        pcall(writefile, filePath, content)
-                    end
-                end
-
-                if isfile(filePath) then
-                    local okA, res = pcall(getAsset, filePath)
-                    if okA and res then
-                        return res
-                    end
+        -- Executors expose the file API either as a global or only inside
+        -- getgenv(), so look in both places before giving up.
+        local function GetExecutorFunction(Name)
+            if type(_G) == "table" and type(_G[Name]) == "function" then
+                return _G[Name]
+            end
+            --
+            if type(getgenv) == "function" then
+                local Genv = getgenv()
+                if type(Genv) == "table" and type(Genv[Name]) == "function" then
+                    return Genv[Name]
                 end
             end
+            --
+            return nil
         end
-
-        return Asset
+        --
+        local function EnsureAssetFolder()
+            if FolderChecked then return end
+            --
+            FolderChecked = true
+            --
+            -- Always try to create it: isfolder is missing or stubbed to "true"
+            -- in some executors and then the folder never gets created, which
+            -- makes every writefile (and therefore every icon) fail.
+            local MakeFolder = GetExecutorFunction("makefolder")
+            if MakeFolder then
+                pcall(MakeFolder, AssetFolder) -- errors when the folder already exists
+            end
+        end
+        --
+        local function ReadAssetFile(FilePath)
+            local ReadFile = GetExecutorFunction("readfile")
+            if not ReadFile then return nil end
+            --
+            local Success, Content = pcall(ReadFile, FilePath)
+            if Success and type(Content) == "string" then
+                return Content
+            end
+            --
+            return nil
+        end
+        --
+        -- A failed download used to leave an empty file or a GitHub "404: Not
+        -- Found" page behind, and that broken file was reused forever.
+        local function IsImageFile(Content)
+            if type(Content) ~= "string" or #Content < 12 then return false end
+            --
+            local Header = Content:sub(1, 8)
+            --
+            return Header == "\137PNG\r\n\26\n" or Header:sub(1, 3) == "\255\216\255"
+        end
+        --
+        -- Downloads the file and resolves it. The bytes always come from the
+        -- repo link; the file on disk is only the buffer getcustomasset()
+        -- needs. A cached copy is used only when the download fails, and only
+        -- if it is a real image. Returns nil when the path cannot be served.
+        local function ResolveFile(FilePath, Url, GetCustomAsset, WriteFile)
+            local Success, Downloaded = pcall(function()
+                return game:HttpGet(Url)
+            end)
+            --
+            if Success and IsImageFile(Downloaded) then
+                pcall(WriteFile, FilePath, Downloaded)
+            elseif not IsImageFile(ReadAssetFile(FilePath)) then
+                return nil
+            end
+            --
+            local SuccessResolve, Resolved = pcall(GetCustomAsset, FilePath)
+            if SuccessResolve and type(Resolved) == "string" and Resolved ~= "" then
+                return Resolved
+            end
+            --
+            return nil
+        end
+        --
+        function Library:GetAsset(Asset)
+            if type(Asset) ~= "string" or Asset == "" then
+                return Asset
+            end
+            --
+            local Cached = AssetCache[Asset]
+            if type(Cached) == "string" then
+                return Cached
+            elseif type(Cached) == "number" and os.clock() - Cached < 5 then
+                -- Throttle retries so a dead connection cannot stall the UI.
+                return Asset
+            end
+            --
+            local IsHttp = Asset:sub(1, 7) == "http://" or Asset:sub(1, 8) == "https://"
+            local IsRepoFile = (not IsHttp) and Asset:match("^[%w_%-]+%.png$") ~= nil
+            --
+            if not IsHttp and not IsRepoFile then
+                return Asset
+            end
+            --
+            local GetCustomAsset = GetExecutorFunction("getcustomasset") or GetExecutorFunction("getsynasset")
+            local WriteFile = GetExecutorFunction("writefile")
+            --
+            if not GetCustomAsset or not WriteFile then
+                return Asset
+            end
+            --
+            local Url = IsHttp and Asset or (AssetRepo .. (Asset:gsub("^%./", "")))
+            local FileName = Url:match("([^/%?#]+)$") or "asset.png"
+            --
+            EnsureAssetFolder()
+            --
+            -- Prefer gamesense_assets/, but keep working on executors that cannot
+            -- create a folder at all: then the file goes into the workspace root.
+            local Resolved = ResolveFile(AssetFolder .. "/" .. FileName, Url, GetCustomAsset, WriteFile) or ResolveFile(FileName, Url, GetCustomAsset, WriteFile)
+            --
+            if Resolved then
+                AssetCache[Asset] = Resolved
+                return Resolved
+            end
+            --
+            AssetCache[Asset] = os.clock()
+            return Asset
+        end
     end
     --
     function Library:Connection(Signal, Func, Name, Table)
