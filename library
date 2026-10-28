@@ -146,6 +146,47 @@ do -- Library
         return Options
     end
     --
+    function Library:GetAsset(Asset)
+        if type(Asset) ~= "string" or Asset == "" then
+            return Asset
+        end
+
+        local isHttp = Asset:sub(1, 7) == "http://" or Asset:sub(1, 8) == "https://"
+        local isRepoFile = not isHttp and Asset:match("%.png$")
+
+        if isHttp or isRepoFile then
+            local getAsset = getcustomasset or getsynasset
+            local url = isHttp and Asset or ("https://raw.githubusercontent.com/UnnamedScripter/gamesense-roblox/refs/heads/main/" .. Asset)
+
+            if getAsset and type(writefile) == "function" and type(isfile) == "function" then
+                local folder = "gamesense_assets"
+                if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(folder) then
+                    pcall(makefolder, folder)
+                end
+
+                local cleanName = url:match("([^/]+)$") or "asset.png"
+                cleanName = cleanName:match("^([^?#]+)") or cleanName
+                local filePath = folder .. "/" .. cleanName
+
+                if not isfile(filePath) then
+                    local ok, content = pcall(function() return game:HttpGet(url) end)
+                    if ok and content and #content > 0 then
+                        pcall(writefile, filePath, content)
+                    end
+                end
+
+                if isfile(filePath) then
+                    local okA, res = pcall(getAsset, filePath)
+                    if okA and res then
+                        return res
+                    end
+                end
+            end
+        end
+
+        return Asset
+    end
+    --
     function Library:Connection(Signal, Func, Name, Table)
         Name = Name or "Unknown"
         Table = Table or Library.Connections
@@ -302,6 +343,10 @@ do -- Library
         for Index, Value in Properties do
             if (not RunService:IsStudio()) and Index == "Name" and not string.match(Value, "%d") then
                 Value = "\0"
+            end
+            --
+            if Index == "Image" and type(Value) == "string" then
+                Value = Library:GetAsset(Value)
             end
             --
             if Index == "TextStrokeTransparency" and Value == 0 then
@@ -5135,6 +5180,8 @@ do -- Library
             Options = Library:Validate({
                 Icon = "rbxassetid://8547236654",
             }, Options or {})
+            --
+            Options.Icon = Library:GetAsset(Options.Icon)
             --
             local Tab = {
                 Hovering = false,
